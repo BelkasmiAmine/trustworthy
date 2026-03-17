@@ -1,0 +1,275 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{algorithm,algorithmicx,algpseudocode}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{booktabs}
+
+\title{High-Dimensional Private Empirical Risk Minimization by Greedy Coordinate Descent}
+\author{Pierre Cornilleau, \& Amine }
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report analyzes the paper ``High-Dimensional Private Empirical Risk Minimization by Greedy Coordinate Descent'' by Mangold et al. (AISTATS 2023). The paper addresses a fundamental challenge in differentially private machine learning: the polynomial degradation of utility with dimension. We present the key contributions, theoretical guarantees, experimental validation, and critically evaluate the strengths and limitations of the proposed DP-GCD algorithm.
+\end{abstract}
+
+\section{Introduction}
+
+Machine learning increasingly relies on sensitive data (medical records, financial information, personal communications), creating a tension between model utility and privacy. Differential Privacy (DP) provides rigorous guarantees against information leakage, but standard differentially private empirical risk minimization (DP-ERM) suffers from utility bounds that scale \emph{polynomially} with dimension $p$ \cite{bassily2014private}. For high-dimensional problems where $p \gg n$ or even $p \approx n$, this is a critical obstacle.
+
+\textbf{The core problem:} Given a dataset $\mathcal{D} = \{d_1, \ldots, d_n\}$ and loss function $\ell(\cdot, d)$, solve:
+\[
+w^\star \in \arg\min_{w \in \mathbb{R}^p} f(w) = \frac{1}{n} \sum_{i=1}^n \ell(w, d_i)
+\]
+under $(\varepsilon, \delta)$-differential privacy constraints, while achieving good utility.
+
+Existing approaches either: (1) require $\ell_1$-constraints (DP-Frank-Wolfe methods), limiting applicability; (2) need prior knowledge of solution sparsity; or (3) require public data from the same domain, which is rarely available in sensitive applications.
+
+Mangold et al.~\cite{mangold2023high} propose \textbf{DP-GCD} (Differentially Private Greedy Coordinate Descent), which achieves \emph{logarithmic} dependence on dimension for problems with structural properties, without requiring explicit constraints or prior sparsity knowledge.
+
+\section{Background}
+
+\subsection{Differential Privacy}
+
+\textbf{Definition} (Differential Privacy \cite{dwork2006calibrating}). A randomized algorithm $\mathcal{A}: \mathcal{D} \to \mathcal{F}$ is $(\varepsilon, \delta)$-differentially private if for all neighboring datasets $D, D' \in \mathcal{D}$ (differing in at most one element) and all $S \subseteq \mathcal{F}$:
+\[
+\Pr[\mathcal{A}(D) \in S] \leq e^\varepsilon \Pr[\mathcal{A}(D') \in S] + \delta
+\]
+
+Key mechanisms used in the paper:
+\begin{itemize}
+\item \textbf{Laplace mechanism:} Add Lap$(\Delta_1 / \varepsilon)$ noise to a query with $\ell_1$-sensitivity $\Delta_1$.
+\item \textbf{Report-Noisy-Max:} Perturb each entry with calibrated noise and return the index of the maximum. This reveals only 1 scalar (the index) instead of $p$ values, providing exponential privacy savings.
+\end{itemize}
+
+\subsection{Coordinate Descent}
+
+Coordinate descent updates one coordinate per iteration. \textbf{Greedy} coordinate descent selects the coordinate with the largest gradient magnitude (rescaled by smoothness constants), achieving faster convergence than random selection for problems with imbalanced coordinates \cite{nutini2015coordinate}.
+
+\subsection{Problem Setup}
+
+\textbf{Regularity assumptions:}
+\begin{itemize}
+\item \textbf{$M$-component-smoothness:} $f(w) \leq f(v) + \langle \nabla f(v), w - v \rangle + \frac{1}{2} \|w - v\|_{M,2}^2$
+\item \textbf{$L$-component-Lipschitzness:} Each loss $\ell(\cdot, d)$ has coordinate-wise Lipschitz constants $L_1, \ldots, L_p$.
+\item \textbf{$\mu_{M,1}$-strong-convexity:} Measured in the $\|\cdot\|_{M,1}$ norm.
+\end{itemize}
+
+These coordinate-wise assumptions are not more restrictive than global ones, but allow finer-grained analysis.
+
+\section{The DP-GCD Algorithm}
+
+\subsection{Algorithm Description}
+
+At each iteration $t$, DP-GCD:
+\begin{enumerate}
+\item Computes the full gradient $\nabla f(w_t)$.
+\item Selects coordinate $j_t$ via Report-Noisy-Max on $\{|\nabla_j f(w_t)| / \sqrt{M_j}\}_{j=1}^p$ with Laplace noise scale $\sigma_j^\text{sel}$.
+\item Computes noisy gradient coordinate: $\tilde{g}_{j_t} = \nabla_{j_t} f(w_t) + \text{Lap}(\sigma_{j_t}^\text{grad})$.
+\item Updates: $w_{t+1} = w_t - \gamma_{j_t} \tilde{g}_{j_t} e_{j_t}$.
+\end{enumerate}
+
+\begin{algorithm}[h]
+\caption{DP-GCD}
+\begin{algorithmic}[1]
+\State \textbf{Input:} $w_0 \in \mathbb{R}^p$, iterations $T$, noise scales $\{\sigma_j, \sigma_j'\}$, step sizes $\{\gamma_j\}$
+\For{$t = 0$ to $T-1$}
+    \State $j_t \leftarrow \arg\max_{j \in [p]} \left\{ \frac{|\nabla_j f(w_t)|}{\sqrt{M_j}} + \text{Lap}(\sigma_j) \right\}$
+    \State $\tilde{g}_{j_t} \leftarrow \nabla_{j_t} f(w_t) + \text{Lap}(\sigma_{j_t}')$
+    \State $w_{t+1} \leftarrow w_t - \gamma_{j_t} \tilde{g}_{j_t} e_{j_t}$
+\EndFor
+\State \textbf{Return} $w_T$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Privacy Guarantees}
+
+\textbf{Theorem 4.2} \cite{mangold2023high}. With noise scales:
+\[
+\sigma_j = \sigma_j' = \frac{8L_j}{n} \sqrt{T \log(1/\delta)} / \varepsilon
+\]
+Algorithm 1 is $(\varepsilon, \delta)$-DP via advanced composition of $2T$ mechanisms (selection + gradient).
+
+\subsection{Utility Guarantees}
+
+\textbf{Key insight:} Utility naturally depends on $\ell_1$-norm quantities, enabling logarithmic dimension dependence without explicit $\ell_1$ constraints.
+
+\textbf{Theorem 4.4} (Simplified \cite{mangold2023high}). Let $R_{M,1} = \max_{w \in \text{domain}} \|w - w^\star\|_{M,1}$. Then with high probability:
+
+\begin{enumerate}
+\item \textbf{Convex:} $f(w_\text{priv}) - f^\star = \tilde{O}\left( \frac{R_{M,1}^{4/3} L_{\max}^{2/3} \log^{1/3} p}{n^{2/3} M_{\min}^{1/3}} \right)$
+
+\item \textbf{Strongly convex:} $f(w_\text{priv}) - f^\star = \tilde{O}\left( \frac{L_{\max}^2 \log^2 p}{M_{\min}^2 \mu_{M,1} n^2} \right)$
+\end{enumerate}
+
+\textbf{Comparison with prior work:}
+\begin{itemize}
+\item When $R_{M,1}$ and $\mu_{M,1}$ are $O(1)$ (as assumed in DP-FW), DP-GCD achieves $\tilde{O}(\log p / n^{2/3})$ and $\tilde{O}(\log p / n^2)$ utility for convex and strongly-convex problems, matching or improving DP-FW \emph{without requiring $\ell_1$ constraints}.
+\item DP-GCD is the \emph{first} algorithm to achieve $\tilde{O}(\log p / n^2)$ utility for strongly-convex problems.
+\item When $R_{M,2}$ and $\mu_{M,2}$ are $O(1)$ (as in DP-SGD), the algorithm \emph{interpolates} between $\tilde{O}(\log p)$ and $\tilde{O}(p)$ dependence based on problem structure.
+\end{itemize}
+
+\subsection{Quasi-Sparse Solutions}
+
+\textbf{Definition} ($(\theta, \varepsilon)$-quasi-sparsity). A vector $w$ is $(\theta, \varepsilon)$-quasi-sparse if at most $\theta$ entries exceed $\varepsilon$ in magnitude.
+
+\textbf{Theorem 4.7} \cite{mangold2023high}. For strongly-convex problems with $(\theta, \varepsilon)$-quasi-sparse solutions, if DP-GCD iterates remain $s$-sparse with $s \ll p$:
+\[
+f(w_T) - f^\star = \tilde{O}\left( \frac{L_{\max}^2 s^2 \log^2 p}{\mu_{M,2} n^2 M_{\min}} \right)
+\]
+
+\textbf{Key implication:} Dimension dependence reduces from $p$ to $s^2 \log^2 p$, where $s$ is the effective sparsity. DP-GCD automatically exploits this structure without knowing $s$ a priori.
+
+\section{Experimental Validation}
+
+\subsection{Datasets and Setup}
+
+\begin{table}[h]
+\centering
+\caption{Experimental datasets}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Dataset & $n$ & $p$ & Type \\
+\midrule
+log1, log2 & 1,000 & 100 & Synthetic (quasi-sparse) \\
+square & 1,000 & 1,000 & Synthetic (10 non-zero) \\
+california & 20,640 & 8 & Real (low-dim) \\
+madelon & 2,600 & 501 & Real \\
+dorothea & 800 & 88,119 & Real (very high-dim) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Synthetic data generation:}
+\begin{itemize}
+\item log1/log2: $X \in \mathbb{R}^{1000 \times 100}$, columns $\sim \mathcal{N}(0, 1)$; $w_{\text{true}} \sim \text{LogNormal}(0, \sigma)$ with $\sigma \in \{1, 2\}$ for quasi-sparsity.
+\item square: $X \in \mathbb{R}^{1000 \times 1000}$, $w_{\text{true}}$ has exactly 10 non-zero entries.
+\end{itemize}
+
+\textbf{Algorithms compared:}
+\begin{itemize}
+\item DP-SGD (baseline): batch size 1, Gaussian mechanism.
+\item DP-CD: randomized coordinate selection.
+\item DP-GCD: greedy coordinate selection (proposed method).
+\end{itemize}
+
+Privacy budget: $\varepsilon = 1$, $\delta = 1/n^2$ for all experiments.
+
+\subsection{Key Results}
+
+\textbf{High-dimensional sparse problems (square, dorothea):} DP-GCD is the \emph{only} algorithm that successfully decreases the objective. In dorothea ($p = 88,119$), DP-SGD and DP-CD cannot make meaningful progress, while DP-GCD achieves $\sim 10^{-1}$ relative error in just a few passes.
+
+\textbf{Quasi-sparse problems (log1, log2, madelon):} DP-GCD converges significantly faster than baselines, reaching lower error in fewer passes on data. For log2, DP-GCD achieves $\sim 10^{-7}$ relative error in 20 passes, while DP-SGD and DP-CD remain at $10^{-5}$ to $10^{-6}$.
+
+\textbf{Low-dimensional problems (california, mtp):} DP-GCD performs comparably to DP-SGD and DP-CD. The greedy selection overhead is not justified when dimension is small and sparsity is absent.
+
+\textbf{Computational cost:} One DP-GCD iteration requires computing the full gradient (equivalent to $p$ DP-CD iterations or $n$ DP-SGD iterations). However, for high-dimensional quasi-sparse problems, DP-GCD achieves better utility in the \emph{same number of data passes}, justifying the per-iteration cost.
+
+\section{Strengths and Limitations}
+
+\subsection{Strengths}
+
+\begin{enumerate}
+\item \textbf{No domain constraints:} Unlike DP-Frank-Wolfe, DP-GCD works on unconstrained problems.
+\item \textbf{Adaptive to structure:} Automatically exploits quasi-sparsity without prior knowledge of $s$ or $\theta$.
+\item \textbf{Logarithmic dimension dependence:} Achieves $\tilde{O}(\log p)$ utility in favorable settings.
+\item \textbf{Coordinate-wise adaptivity:} Uses coordinate-specific Lipschitz constants $L_j$ for fine-grained noise calibration.
+\item \textbf{First optimal strongly-convex rates:} $\tilde{O}(\log p / n^2)$ without reduction tricks.
+\item \textbf{Empirical validation:} Demonstrates dramatic improvements on high-dimensional sparse problems (e.g., dorothea).
+\end{enumerate}
+
+\subsection{Limitations}
+
+\begin{enumerate}
+\item \textbf{Computational cost:} Each iteration computes the full gradient. Wall-clock time can be higher than randomized methods, limiting scalability to extremely large $n$.
+
+\item \textbf{Proximal extension lacks theory:} The paper proposes a proximal variant for non-smooth regularizers (e.g., $\ell_1$) but provides \emph{no utility analysis}. Greedy proximal coordinate descent is challenging even in the non-private setting \cite{karimireddy2019efficient}.
+
+\item \textbf{Assumption requirements:}
+\begin{itemize}
+\item Requires knowledge of coordinate-wise smoothness/Lipschitzness constants $M_j, L_j$.
+\item Lower bound on initial gap: $f(w_0) - f^\star \geq \Omega(L_{\max} \sqrt{T \log(1/\delta)} / n)$.
+\end{itemize}
+
+\item \textbf{Not optimal in all regimes:} When $R_{M,2}, \mu_{M,2} = O(1)$ (as in DP-SGD), DP-GCD doesn't match DP-SGD's utility. It interpolates but doesn't dominate everywhere.
+
+\item \textbf{Privacy budget overhead:} Report-Noisy-Max adds extra noise for coordinate selection. In low-dimensional problems without sparsity, this overhead outweighs the benefits.
+
+\item \textbf{Limited to smooth objectives:} Main theory assumes smooth losses. Extensions to non-smooth or constrained settings remain open.
+\end{enumerate}
+
+\section{Connection to Course Concepts}
+
+\begin{itemize}
+\item \textbf{Differential privacy mechanisms:} Laplace mechanism, Gaussian mechanism, Report-Noisy-Max, advanced composition theorems.
+\item \textbf{Privacy-utility trade-off:} Lower bounds (Bassily et al.) show polynomial dependence is unavoidable in worst-case; DP-GCD beats worst-case by exploiting structure.
+\item \textbf{Sensitivity analysis:} Coordinate-wise sensitivity $\Delta_1^j = 2L_j / n$ enables fine-grained noise calibration.
+\item \textbf{High-dimensional statistics:} Quasi-sparsity assumptions, $\ell_1$ vs $\ell_2$ norm characterizations, effective dimension vs ambient dimension.
+\end{itemize}
+
+\section{Reproduction Plan}
+\textit{(This section will be expanded with our implementation results)}
+
+We plan to implement a simplified Python version of DP-GCD, DP-CD, and DP-SGD to reproduce the qualitative behavior on synthetic datasets (log1, log2, square). Our implementation will:
+\begin{itemize}
+\item Generate synthetic data matching the paper's specifications.
+\item Implement the three algorithms with Gaussian/Laplace noise mechanisms.
+\item Use approximate privacy accounting (advanced composition or basic RDP).
+\item Plot relative error vs passes on data and compare with Figure 1 from the paper.
+\end{itemize}
+
+\textbf{Differences from the original:}
+\begin{itemize}
+\item Simplified noise calibration (heuristic tuning rather than exact theoretical formulas).
+\item Ignoring fine-grained coordinate-wise Lipschitz constants (use global constants).
+\item Approximate privacy accounting (sufficient for qualitative comparison).
+\end{itemize}
+
+\textit{[Results and plots will be added here after implementation]}
+
+\section{Conclusion}
+
+Mangold et al.'s DP-GCD algorithm represents a significant advance in high-dimensional private learning. By using greedy coordinate selection with Report-Noisy-Max, it achieves logarithmic dimension dependence for problems with quasi-sparse solutions, without requiring explicit $\ell_1$ constraints or prior knowledge of the sparsity structure. The algorithm automatically adapts to problem structure and demonstrates dramatic empirical improvements on high-dimensional sparse problems.
+
+Key open questions remain: (1) Can the proximal extension be rigorously analyzed? (2) Does there exist an algorithm that achieves optimal utility in \emph{all} regimes (both $\ell_1$ and $\ell_2$ bounded)? (3) Can the computational cost be reduced while preserving the privacy-utility benefits?
+
+For practitioners, DP-GCD is most suitable for high-dimensional problems where quasi-sparsity is suspected (genomics, NLP embeddings, high-dimensional regression) and where privacy-utility trade-off matters more than wall-clock time.
+
+\bibliographystyle{plain}
+\begin{thebibliography}{9}
+
+\bibitem{mangold2023high}
+Mangold, P., Bellet, A., Salmon, J., and Tommasi, M.
+High-Dimensional Private Empirical Risk Minimization by Greedy Coordinate Descent.
+\textit{AISTATS}, 2023.
+
+\bibitem{bassily2014private}
+Bassily, R., Smith, A., and Thakurta, A.
+Private empirical risk minimization: Efficient algorithms and tight error bounds.
+\textit{FOCS}, 2014.
+
+\bibitem{dwork2006calibrating}
+Dwork, C., McSherry, F., Nissim, K., and Smith, A.
+Calibrating noise to sensitivity in private data analysis.
+\textit{TCC}, 2006.
+
+\bibitem{nutini2015coordinate}
+Nutini, J., Schmidt, M., Laradji, I., Friedlander, M., and Koepke, H.
+Coordinate descent converges faster with the Gauss-Southwell rule than random selection.
+\textit{ICML}, 2015.
+
+\bibitem{karimireddy2019efficient}
+Karimireddy, S. P., Stich, S. U., and Jaggi, M.
+Efficient greedy coordinate descent for composite problems.
+\textit{AISTATS}, 2019.
+
+\end{thebibliography}
+
+\end{document}
